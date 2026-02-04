@@ -1,0 +1,17 @@
+{
+  "framework": "nextjs",
+  "functions": {
+    "app/api/upload/route.ts": {
+      "maxDuration": 60,
+      "memory": 2048
+    },
+    "app/api/extract-metadata/route.ts": {
+      "maxDuration": 60,
+      "memory": 2048
+    },
+    "app/api/parse-pdf/route.ts": {
+      "maxDuration": 60,
+      "memory": 2048
+    }
+  }
+}

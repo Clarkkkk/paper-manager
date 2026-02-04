@@ -1,0 +1,22 @@
+# MySciSpace Docker Compose 部署配置
+version: '3.8'
+
+services:
+  myscispace:
+    build:
+      context: .
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+    ports:
+      - "3000:3000"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - SYSTEM_OPENAI_API_KEY=${SYSTEM_OPENAI_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+    restart: unless-stopped
+
+# 使用方法:
+# 1. 复制 .env.example 为 .env 并填写配置
+# 2. docker-compose up -d --build
+# 3. 访问 http://localhost:3000
