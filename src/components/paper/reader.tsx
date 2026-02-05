@@ -14,14 +14,28 @@ import { cn } from '@/lib/utils'
 interface PaperReaderProps {
   paper: Paper
   note: Note | null
-  pdfUrl: string
+  pdfPath: string
 }
 
-export function PaperReader({ paper, note, pdfUrl }: PaperReaderProps) {
+type CachedSignedUrl = {
+  signedUrl: string
+  expiresAt: number
+  file_url: string
+}
+
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000
+
+function getSignedUrlCacheKey(paperId: string) {
+  return `myscispace:paper-signed-url:${paperId}`
+}
+
+export function PaperReader({ paper, note, pdfPath }: PaperReaderProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [activeTab, setActiveTab] = useState<'notes' | 'chat'>('notes')
   const [pdfContent, setPdfContent] = useState<string>('')
   const [isLoadingPdf, setIsLoadingPdf] = useState(true)
+  const [pdfUrl, setPdfUrl] = useState<string>('')
+  const [isLoadingPdfUrl, setIsLoadingPdfUrl] = useState(true)
   
   // 使用快捷模型选择
   const [quickModel, setQuickModel] = useState<string>('liquid/lfm-2.5-1.2b-instruct:free')
@@ -33,6 +47,74 @@ export function PaperReader({ paper, note, pdfUrl }: PaperReaderProps) {
   const handleModelChange = useCallback((modelId: string) => {
     setQuickModel(modelId)
   }, [])
+
+  // 获取（并缓存）PDF 的 signed URL，用于 iframe 加载
+  useEffect(() => {
+    let cancelled = false
+    const loadSignedUrl = async () => {
+      setIsLoadingPdfUrl(true)
+      try {
+        const key = getSignedUrlCacheKey(paper.id)
+        const raw = localStorage.getItem(key)
+        if (raw) {
+          try {
+            const cached = JSON.parse(raw) as CachedSignedUrl
+            const stillValid =
+              cached &&
+              typeof cached.signedUrl === 'string' &&
+              cached.signedUrl &&
+              cached.file_url === pdfPath &&
+              typeof cached.expiresAt === 'number' &&
+              cached.expiresAt > Date.now() + 60_000 // 1min skew
+
+            if (stillValid) {
+              if (!cancelled) setPdfUrl(cached.signedUrl)
+              return
+            }
+          } catch {
+            // ignore bad cache
+          }
+        }
+
+        const res = await fetch('/api/papers/signed-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            paperId: paper.id,
+            expiresInSeconds: Math.floor(ONE_WEEK_MS / 1000),
+          }),
+        })
+
+        if (!res.ok) {
+          throw new Error('Failed to get signed URL')
+        }
+
+        const data = (await res.json()) as { signedUrl?: string; expiresAt?: number; file_url?: string }
+        if (!data?.signedUrl || typeof data.expiresAt !== 'number') {
+          throw new Error('Invalid signed URL response')
+        }
+
+        const cached: CachedSignedUrl = {
+          signedUrl: data.signedUrl,
+          expiresAt: data.expiresAt,
+          file_url: data.file_url || pdfPath,
+        }
+
+        localStorage.setItem(key, JSON.stringify(cached))
+        if (!cancelled) setPdfUrl(data.signedUrl)
+      } catch (e) {
+        console.error('[PaperReader] signed url error:', e)
+        if (!cancelled) setPdfUrl('')
+      } finally {
+        if (!cancelled) setIsLoadingPdfUrl(false)
+      }
+    }
+
+    loadSignedUrl()
+    return () => {
+      cancelled = true
+    }
+  }, [paper.id, pdfPath])
 
   // 页面加载时提取 PDF 内容
   useEffect(() => {
@@ -108,7 +190,11 @@ export function PaperReader({ paper, note, pdfUrl }: PaperReaderProps) {
 
         {/* PDF Embed */}
         <div className="flex-1 bg-zinc-950 relative">
-          {pdfUrl ? (
+          {isLoadingPdfUrl ? (
+            <div className="flex items-center justify-center h-full">
+              <p className="text-zinc-500">正在生成访问链接…</p>
+            </div>
+          ) : pdfUrl ? (
             <iframe
               src={`${pdfUrl}#toolbar=1&navpanes=0`}
               className="w-full h-full border-0"

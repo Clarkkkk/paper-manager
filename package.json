@@ -25,6 +25,8 @@
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.93.3",
     "@types/formidable": "^3.4.6",
+    "@uppy/core": "^5.2.0",
+    "@uppy/tus": "^5.1.1",
     "ai": "^6.0.67",
     "busboy": "^1.6.0",
     "class-variance-authority": "^0.7.1",

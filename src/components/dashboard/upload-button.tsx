@@ -17,10 +17,18 @@ import { TagInput } from '@/components/ui/tag-input'
 import { Upload, FileUp, Loader2, CheckCircle2, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { createClient } from '@/lib/supabase/client'
+import { sanitizeStorageObjectName } from '@/lib/storage/sanitize-object-name'
+import { useResumableUpload } from '@/lib/supabase/use-resumable-upload'
 
 interface UploadButtonProps {
   variant?: 'default' | 'large'
   presetTags?: string[]
+}
+
+function formatPercent(p: number) {
+  const v = Math.max(0, Math.min(100, Math.round(p)))
+  return `${v}%`
 }
 
 export function UploadButton({ variant = 'default', presetTags = [] }: UploadButtonProps) {
@@ -36,6 +44,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
   const [journal, setJournal] = useState('')
   const [isDragging, setIsDragging] = useState(false)
   const [isExtracting, setIsExtracting] = useState(false)
+  const { state: uploadState, uploadPdf } = useResumableUpload()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
@@ -54,7 +63,18 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
 
   const allPresetTags = [...new Set([...presetTags, ...savedPresetTags])]
 
+  const isBusy =
+    isExtracting ||
+    uploading ||
+    uploadProgress === 'uploading' ||
+    uploadProgress === 'extracting' ||
+    uploadProgress === 'processing'
+
   const processFile = useCallback(async (selectedFile: File) => {
+    if (isBusy) {
+      toast.message('正在处理中，请稍候…')
+      return
+    }
     if (selectedFile.type !== 'application/pdf') {
       toast.error('请上传 PDF 文件')
       return
@@ -74,29 +94,49 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
     setIsExtracting(true)
     setUploadProgress('uploading')
     try {
-      const formData = new FormData()
-      formData.append('file', selectedFile)
-
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json()
-        throw new Error(err.error || '上传失败')
+      const supabase = createClient()
+      const { data: { user }, error: userError } = await supabase.auth.getUser()
+      if (userError || !user) {
+        throw new Error('请先登录后再上传')
       }
 
-      const uploadData = await uploadRes.json()
-      setUploadedFileUrl(uploadData.file_url)
+      const timestamp = Date.now()
+      const { sanitized } = sanitizeStorageObjectName(selectedFile.name)
+      const filePath = `${user.id}/${timestamp}-${sanitized}`
 
-      const metadata = uploadData.metadata
-      if (metadata) {
-        if (metadata.title) setTitle(metadata.title)
-        if (metadata.authors) setAuthors(metadata.authors)
-        if (metadata.keywords) setKeywords(metadata.keywords)
-        if (metadata.journal) setJournal(metadata.journal)
-        toast.success(`已自动识别论文信息 (${uploadData._debug?.source || 'unknown'})`)
+      // 1) 直传 Supabase Storage（绕开 Vercel 请求体大小限制）
+      await uploadPdf({
+        file: selectedFile,
+        bucketName: 'papers',
+        objectName: filePath,
+        contentType: 'application/pdf',
+        metadata: { originalName: selectedFile.name },
+      })
+      const storedPath = filePath
+      setUploadedFileUrl(storedPath)
+
+      // 2) 上传后立刻调用后端提取论文元数据（请求体很小）
+      setUploadProgress('extracting')
+      const metaRes = await fetch('/api/extract-metadata', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file_url: storedPath,
+          file_name: selectedFile.name,
+        }),
+      })
+
+      if (metaRes.ok) {
+        const meta = await metaRes.json()
+        if (meta?.title) setTitle(meta.title)
+        if (meta?.authors) setAuthors(meta.authors)
+        if (meta?.keywords) setKeywords(meta.keywords)
+        if (meta?.journal) setJournal(meta.journal)
+        toast.success(`已自动识别论文信息 (${meta?._debug?.source || 'unknown'})`)
+      } else {
+        // 元数据失败不阻断上传结果
+        console.error('Metadata extraction failed:', await metaRes.text())
+        toast.warning('上传成功，但论文信息识别失败（可稍后在详情页重试）')
       }
 
       setUploadProgress('idle')
@@ -107,9 +147,10 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
     } finally {
       setIsExtracting(false)
     }
-  }, [])
+  }, [isBusy, uploadPdf])
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isBusy) return
     const selectedFile = e.target.files?.[0]
     if (selectedFile) {
       processFile(selectedFile)
@@ -117,10 +158,11 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
   }
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (isBusy) return
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(true)
-  }, [])
+  }, [isBusy])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -129,6 +171,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
   }, [])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
+    if (isBusy) return
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
@@ -137,9 +180,10 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
     if (droppedFile) {
       processFile(droppedFile)
     }
-  }, [processFile])
+  }, [isBusy, processFile])
 
   const handleUpload = async () => {
+    if (isBusy) return
     if (!file || !uploadedFileUrl) {
       toast.error('请先选择并上传文件')
       return
@@ -172,6 +216,22 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
       if (!paperRes.ok) {
         const error = await paperRes.json()
         throw new Error(error.error || '创建论文记录失败')
+      }
+
+      // 3) 异步预热解析缓存：不阻塞上传流程
+      // 解析结果会持久化到 Storage，下次打开/刷新详情页可直接命中缓存，避免重复解析。
+      try {
+        const created = await paperRes.json()
+        const createdPaperId = created?.paper?.id as string | undefined
+        if (createdPaperId) {
+          void fetch('/api/parse-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paperId: createdPaperId, warm_cache: true }),
+          }).catch(() => {})
+        }
+      } catch {
+        // ignore
       }
 
       setUploadProgress('done')
@@ -214,6 +274,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => {
+      if (!isOpen && isBusy) return
       setOpen(isOpen)
       if (!isOpen) resetForm()
     }}>
@@ -235,7 +296,19 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:w-lg bg-zinc-900 border-zinc-800 max-h-[90vh] overflow-y-auto flex flex-col">
+      <DialogContent
+        className="sm:w-lg bg-zinc-900 border-zinc-800 max-h-[90vh] overflow-y-auto flex flex-col"
+        showCloseButton={!isBusy}
+        onEscapeKeyDown={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+        onPointerDownOutside={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+        onInteractOutside={(e) => {
+          if (isBusy) e.preventDefault()
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="text-zinc-100">上传论文</DialogTitle>
           <DialogDescription className="text-zinc-500">
@@ -247,13 +320,17 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
           <div
             className={cn(
               'border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer w-full',
+              isBusy && 'cursor-not-allowed opacity-60',
               isDragging
                 ? 'border-emerald-500 bg-emerald-500/10 scale-[1.02]'
                 : file
                   ? 'border-emerald-500/50 bg-emerald-500/5'
                   : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800/50'
             )}
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (isBusy) return
+              fileInputRef.current?.click()
+            }}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -263,6 +340,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               type="file"
               accept=".pdf,application/pdf"
               onChange={handleFileChange}
+              disabled={isBusy}
               className="hidden"
             />
             {file ? (
@@ -279,7 +357,8 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
                 </p>
                 <p className="text-xs text-zinc-500">
                   {(file.size / 1024 / 1024).toFixed(2)} MB
-                  {isExtracting && ' · 正在识别论文信息...'}
+                  {uploadProgress === 'uploading' && (uploadState.percent === null ? ' · 上传中...' : ` · 上传中 ${formatPercent(uploadState.percent)}`)}
+                  {uploadProgress === 'extracting' && ' · 正在识别论文信息...'}
                 </p>
               </div>
             ) : (
@@ -321,6 +400,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="输入论文标题"
+              disabled={isBusy}
               className="bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500"
             />
           </div>
@@ -334,6 +414,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               value={authors}
               onChange={(e) => setAuthors(e.target.value)}
               placeholder="例如：John Doe, Jane Smith"
+              disabled={isBusy}
               className="bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500"
             />
           </div>
@@ -347,6 +428,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               value={keywords}
               onChange={(e) => setKeywords(e.target.value)}
               placeholder="例如：深度学习, 注意力机制, 图神经网络"
+              disabled={isBusy}
               className="bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500"
             />
             <p className="text-xs text-zinc-600">
@@ -363,6 +445,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               value={journal}
               onChange={(e) => setJournal(e.target.value)}
               placeholder="例如：Nature, CVPR 2024, Cell"
+              disabled={isBusy}
               className="bg-zinc-800/50 border-zinc-700 text-zinc-100 placeholder:text-zinc-500 focus:border-emerald-500"
             />
           </div>
@@ -376,6 +459,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
               onChange={setTags}
               placeholder="输入标签后按 Enter 添加"
               maxTags={5}
+              disabled={isBusy}
             />
             {allPresetTags.length > 0 && (
               <div className="flex flex-wrap gap-1.5 mt-2">
@@ -385,6 +469,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
                     key={tag}
                     type="button"
                     onClick={() => addPresetTag(tag)}
+                    disabled={isBusy}
                     className="text-xs px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
                   >
                     + {tag}
@@ -396,7 +481,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
 
           <Button
             onClick={handleUpload}
-            disabled={!file || uploading || isExtracting}
+            disabled={!file || uploading || isExtracting || uploadProgress === 'uploading' || uploadProgress === 'extracting'}
             className="w-full h-11 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white"
           >
             {uploading ? (

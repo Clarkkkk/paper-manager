@@ -11,6 +11,7 @@ interface TagInputProps {
   placeholder?: string
   maxTags?: number
   className?: string
+  disabled?: boolean
 }
 
 export function TagInput({
@@ -19,10 +20,12 @@ export function TagInput({
   placeholder = '输入标签后按 Enter',
   maxTags = 10,
   className,
+  disabled = false,
 }: TagInputProps) {
   const [inputValue, setInputValue] = useState('')
 
   const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (disabled) return
     if (e.key === 'Enter') {
       e.preventDefault()
       addTag()
@@ -33,6 +36,7 @@ export function TagInput({
   }
 
   const addTag = () => {
+    if (disabled) return
     const tag = inputValue.trim()
     if (!tag) return
     if (value.includes(tag)) {
@@ -47,6 +51,7 @@ export function TagInput({
   }
 
   const removeTag = (tagToRemove: string) => {
+    if (disabled) return
     onChange(value.filter(tag => tag !== tagToRemove))
   }
 
@@ -62,14 +67,15 @@ export function TagInput({
             <button
               type="button"
               onClick={() => removeTag(tag)}
-              className="p-0.5 rounded hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 transition-colors"
+              disabled={disabled}
+              className="p-0.5 rounded hover:bg-emerald-500/20 text-emerald-400 hover:text-emerald-300 transition-colors disabled:pointer-events-none disabled:opacity-50"
             >
               <X className="w-3 h-3" />
             </button>
           </span>
         ))}
       </div>
-      {value.length < maxTags && (
+      {value.length < maxTags && !disabled && (
         <Input
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}

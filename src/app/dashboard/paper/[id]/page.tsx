@@ -31,16 +31,11 @@ export default async function PaperPage({ params }: PaperPageProps) {
     .eq('paper_id', id)
     .single()
 
-  // 获取 Signed URL 用于 PDF 查看
-  const { data: signedUrlData } = await supabase.storage
-    .from('papers')
-    .createSignedUrl(paper.file_url, 60 * 60) // 1小时有效期
-
   return (
     <PaperReader 
       paper={paper} 
       note={note} 
-      pdfUrl={signedUrlData?.signedUrl || ''} 
+      pdfPath={paper.file_url} 
     />
   )
 }

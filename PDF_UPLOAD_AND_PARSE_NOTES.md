@@ -24,6 +24,14 @@
 
 注意：修改 `next.config.ts` 后需要 **重启 dev server** 才生效。
 
+### 推荐做法（生产环境）
+
+如果部署在 Vercel 免费版，**更推荐前端直传 Supabase Storage**，避免上传请求经过 Vercel：
+
+1. 前端使用 `supabase.storage.from('papers').upload(...)` 直传 PDF
+2. 上传成功后调用 `/api/extract-metadata` 回填论文信息（请求体很小）
+3. 再调用 `/api/papers` 创建论文记录
+
 ## 问题 2：Supabase Storage bucket / RLS 未配置导致上传失败
 
 ### 2.1 Bucket 不存在

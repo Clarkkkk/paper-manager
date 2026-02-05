@@ -3,6 +3,7 @@ import { getAIClient } from '@/lib/ai/openai'
 import { generateText } from 'ai'
 import { DOI_PREFIX_MAP, NORMALIZED_JOURNAL_MAP, COMMON_JOURNALS } from '@/data/journal-recognition'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { ensurePdfjsWorker } from '@/lib/pdf/pdfjs-worker'
 
 const MAX_EXTRACTED_TEXT_LENGTH = 50000
 const AI_METADATA_TEXT_LENGTH = 3000
@@ -93,11 +94,21 @@ export async function extractMetadataFromUrl(
   // File size is unknown here (we only have a URL). Keep it as 0 in debug.
   const fileSize = 0
 
-  ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = undefined
-  const loadingTask = (pdfjsLib as any).getDocument({
+  // Even with disableWorker=true, PDF.js may attempt to set up a fake worker and requires workerSrc.
+  ensurePdfjsWorker(pdfjsLib as unknown as { GlobalWorkerOptions: { workerSrc?: unknown } })
+  const loadingTask = (pdfjsLib as unknown as {
+    getDocument: (params: {
+      url: string
+      disableWorker: boolean
+      rangeChunkSize: number
+      disableAutoFetch?: boolean
+      stopAtErrors?: boolean
+    }) => { promise: Promise<PdfDocumentProxyLike>; destroy: () => Promise<void> }
+  }).getDocument({
     url,
     disableWorker: true,
-    rangeChunkSize: 256 * 1024,
+    rangeChunkSize: 1024 * 1024,
+    disableAutoFetch: true,
     stopAtErrors: false,
   })
 
@@ -258,10 +269,10 @@ async function extractTextFromFirstPages(
 
   for (let i = 1; i <= pagesToScan; i++) {
     try {
-      const page = await pdf.getPage(i)
+      const page = (await pdf.getPage(i)) as { getTextContent: () => Promise<{ items: Array<{ str?: string }> }> }
       const content = await page.getTextContent()
-      const pageText = content.items
-        .map((item) => 'str' in item && item.str ? item.str : '')
+      const pageText = (content.items || [])
+        .map((item) => (typeof item?.str === 'string' ? item.str : ''))
         .join(' ')
       texts.push(pageText)
     } catch (pageError) {
