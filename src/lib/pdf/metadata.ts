@@ -2,7 +2,6 @@ import { getDocumentProxy } from 'unpdf'
 import { getAIClient } from '@/lib/ai/openai'
 import { generateText } from 'ai'
 import { DOI_PREFIX_MAP, NORMALIZED_JOURNAL_MAP, COMMON_JOURNALS } from '@/data/journal-recognition'
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { ensurePdfjsWorker } from '@/lib/pdf/pdfjs-worker'
 
 const MAX_EXTRACTED_TEXT_LENGTH = 50000
@@ -15,6 +14,27 @@ type PdfDocumentProxyLike = {
   numPages: number
   getMetadata: () => Promise<unknown>
   getPage: (pageNumber: number) => Promise<unknown>
+}
+
+type PdfjsModuleLike = {
+  GlobalWorkerOptions?: {
+    workerSrc?: unknown
+  }
+  getDocument: (params: {
+    url: string
+    disableWorker: boolean
+    rangeChunkSize: number
+    disableAutoFetch?: boolean
+    stopAtErrors?: boolean
+  }) => { promise: Promise<PdfDocumentProxyLike>; destroy: () => Promise<void> }
+}
+
+let pdfjsPromise: Promise<PdfjsModuleLike> | null = null
+async function getPdfjs(): Promise<PdfjsModuleLike> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => m as unknown as PdfjsModuleLike)
+  }
+  return pdfjsPromise
 }
 
 export interface AIDetectedMetadata {
@@ -94,17 +114,10 @@ export async function extractMetadataFromUrl(
   // File size is unknown here (we only have a URL). Keep it as 0 in debug.
   const fileSize = 0
 
+  const pdfjsLib = await getPdfjs()
   // Even with disableWorker=true, PDF.js may attempt to set up a fake worker and requires workerSrc.
-  ensurePdfjsWorker(pdfjsLib as unknown as { GlobalWorkerOptions: { workerSrc?: unknown } })
-  const loadingTask = (pdfjsLib as unknown as {
-    getDocument: (params: {
-      url: string
-      disableWorker: boolean
-      rangeChunkSize: number
-      disableAutoFetch?: boolean
-      stopAtErrors?: boolean
-    }) => { promise: Promise<PdfDocumentProxyLike>; destroy: () => Promise<void> }
-  }).getDocument({
+  ensurePdfjsWorker(pdfjsLib)
+  const loadingTask = pdfjsLib.getDocument({
     url,
     disableWorker: true,
     rangeChunkSize: 1024 * 1024,

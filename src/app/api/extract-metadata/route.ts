@@ -5,6 +5,16 @@ import { supportsHttpRange, withRetries } from '@/lib/pdf/pdfjs-url-text'
 
 export const runtime = 'nodejs'
 export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 204,
+    headers: {
+      Allow: 'POST, OPTIONS',
+    },
+  })
+}
 
 export async function POST(req: NextRequest) {
   const startTime = Date.now()

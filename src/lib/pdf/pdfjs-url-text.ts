@@ -1,4 +1,3 @@
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { ensurePdfjsWorker } from '@/lib/pdf/pdfjs-worker'
 
 type PdfjsModuleLike = {
@@ -26,7 +25,14 @@ type PdfDocumentProxyLike = {
   getPage: (pageNumber: number) => Promise<PdfPageProxyLike>
 }
 
-const pdfjs = pdfjsLib as unknown as PdfjsModuleLike
+let pdfjsPromise: Promise<PdfjsModuleLike> | null = null
+
+async function getPdfjs(): Promise<PdfjsModuleLike> {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => m as unknown as PdfjsModuleLike)
+  }
+  return pdfjsPromise
+}
 
 export interface PdfUrlExtractOptions {
   maxPages?: number
@@ -105,6 +111,7 @@ export async function extractTextFromPdfUrl(
   url: string,
   opts: PdfUrlExtractOptions = {}
 ): Promise<PdfUrlExtractResult> {
+  const pdfjs = await getPdfjs()
   const debugEnabled = true
   const t0 = Date.now()
   const debug = (event: string, data?: Record<string, unknown>) => {
