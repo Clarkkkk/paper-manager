@@ -40,7 +40,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
   const router = useRouter()
 
   const [savedPresetTags, setSavedPresetTags] = useState<string[]>([])
-  
+
   useEffect(() => {
     const saved = localStorage.getItem('myscispace-preset-tags')
     if (saved) {
@@ -89,7 +89,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
 
       const uploadData = await uploadRes.json()
       setUploadedFileUrl(uploadData.file_url)
-      
+
       const metadata = uploadData.metadata
       if (metadata) {
         if (metadata.title) setTitle(metadata.title)
@@ -98,7 +98,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
         if (metadata.journal) setJournal(metadata.journal)
         toast.success(`已自动识别论文信息 (${uploadData._debug?.source || 'unknown'})`)
       }
-      
+
       setUploadProgress('idle')
     } catch (error) {
       console.error('Process error:', error)
@@ -132,7 +132,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
-    
+
     const droppedFile = e.dataTransfer.files?.[0]
     if (droppedFile) {
       processFile(droppedFile)
@@ -175,7 +175,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
       }
 
       setUploadProgress('done')
-      
+
       setTimeout(() => {
         toast.success('论文上传成功！')
         setOpen(false)
@@ -219,7 +219,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
     }}>
       <DialogTrigger asChild>
         {variant === 'large' ? (
-          <Button 
+          <Button
             size="lg"
             className="gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-lg shadow-emerald-500/20"
           >
@@ -227,7 +227,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
             上传论文
           </Button>
         ) : (
-          <Button 
+          <Button
             className="gap-2 bg-emerald-600 hover:bg-emerald-500 text-white"
           >
             <Upload className="w-4 h-4" />
@@ -235,22 +235,22 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg bg-zinc-900 border-zinc-800 max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:w-lg bg-zinc-900 border-zinc-800 max-h-[90vh] overflow-y-auto flex flex-col">
         <DialogHeader>
           <DialogTitle className="text-zinc-100">上传论文</DialogTitle>
           <DialogDescription className="text-zinc-500">
             支持 PDF 格式，最大 50MB，可拖拽上传
           </DialogDescription>
         </DialogHeader>
-        
-        <div className="space-y-4 mt-4">
+
+        <div className="space-y-4 mt-4 w-full">
           <div
             className={cn(
-              'border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer',
-              isDragging 
-                ? 'border-emerald-500 bg-emerald-500/10 scale-[1.02]' 
-                : file 
-                  ? 'border-emerald-500/50 bg-emerald-500/5' 
+              'border-2 border-dashed rounded-xl p-8 text-center transition-all cursor-pointer w-full',
+              isDragging
+                ? 'border-emerald-500 bg-emerald-500/10 scale-[1.02]'
+                : file
+                  ? 'border-emerald-500/50 bg-emerald-500/5'
                   : 'border-zinc-700 hover:border-zinc-600 hover:bg-zinc-800/50'
             )}
             onClick={() => fileInputRef.current?.click()}
@@ -274,7 +274,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
                     <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                   )}
                 </div>
-                <p className="text-sm font-medium text-zinc-200 truncate max-w-full">
+                <p className="text-sm font-medium text-zinc-200 truncate w-full overflow-hidden text-ellipsis">
                   {file.name}
                 </p>
                 <p className="text-xs text-zinc-500">

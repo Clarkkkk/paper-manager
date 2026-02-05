@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { extractText, getDocumentProxy } from 'unpdf'
+import { extractTextFromPdfUrl, supportsHttpRange, withRetries } from '@/lib/pdf/pdfjs-url-text'
 
 export async function POST(req: NextRequest) {
   try {
@@ -42,31 +43,71 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to get PDF URL' }, { status: 500 })
     }
 
-    // 下载 PDF 文件
-    const pdfResponse = await fetch(signedUrlData.signedUrl)
+    const signedUrl = signedUrlData.signedUrl
+
+    // Prefer Range-based parsing (lower peak memory). Fallback to full download when unsupported.
+    const rangeSupported = await supportsHttpRange(signedUrl)
+    const maxLength = 80000
+
+    if (rangeSupported) {
+      try {
+        const { result, attempts } = await withRetries(
+          async () => extractTextFromPdfUrl(signedUrl, { maxChars: maxLength }),
+          3
+        )
+
+        let text = result.text
+          .replace(/\s+/g, ' ')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim()
+
+        if (text.length > maxLength) {
+          text = text.slice(0, maxLength) + '\n\n[... 内容已截断，论文较长 ...]'
+        } else if (result.truncated) {
+          text = text + '\n\n[... 内容已截断，论文较长 ...]'
+        }
+
+        return NextResponse.json({
+          text,
+          pages: result.totalPages,
+          _debug: {
+            mode: 'range_pdfjs',
+            attempts,
+            rangeSupported: true,
+            pagesScanned: result.pagesScanned,
+            truncated: result.truncated,
+          },
+        })
+      } catch (e) {
+        console.warn('[parse-pdf] Range parsing failed, falling back:', e)
+      }
+    }
+
+    // Fallback: download full PDF then parse with unpdf (existing behavior)
+    const pdfResponse = await fetch(signedUrl)
     const pdfBuffer = await pdfResponse.arrayBuffer()
 
-    // 使用 unpdf 解析 PDF
     const pdf = await getDocumentProxy(new Uint8Array(pdfBuffer))
     const { text: pdfText, totalPages } = await extractText(pdf, { mergePages: true })
-    
+
     let fullText = typeof pdfText === 'string' ? pdfText : (pdfText as string[]).join('\n')
-    
-    // 清理文本
     fullText = fullText
       .replace(/\s+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim()
 
-    // 限制文本长度（避免超出 AI 模型的 context window）
-    const maxLength = 80000 // 约 20000 tokens
     if (fullText.length > maxLength) {
       fullText = fullText.slice(0, maxLength) + '\n\n[... 内容已截断，论文较长 ...]'
     }
 
-    return NextResponse.json({ 
+    return NextResponse.json({
       text: fullText,
       pages: totalPages,
+      _debug: {
+        mode: 'full_unpdf',
+        attempts: rangeSupported ? 3 : 0,
+        rangeSupported,
+      },
     })
     
   } catch (error) {

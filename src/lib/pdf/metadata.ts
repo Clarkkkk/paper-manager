@@ -2,12 +2,19 @@ import { getDocumentProxy } from 'unpdf'
 import { getAIClient } from '@/lib/ai/openai'
 import { generateText } from 'ai'
 import { DOI_PREFIX_MAP, NORMALIZED_JOURNAL_MAP, COMMON_JOURNALS } from '@/data/journal-recognition'
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 
 const MAX_EXTRACTED_TEXT_LENGTH = 50000
 const AI_METADATA_TEXT_LENGTH = 3000
 const MAX_PDF_SIZE = 50 * 1024 * 1024
 const EXTRACTION_TIMEOUT_MS = 50000
 const MAX_PAGES_TO_SCAN = 5
+
+type PdfDocumentProxyLike = {
+  numPages: number
+  getMetadata: () => Promise<unknown>
+  getPage: (pageNumber: number) => Promise<unknown>
+}
 
 export interface AIDetectedMetadata {
   title: string
@@ -74,8 +81,54 @@ export async function extractMetadataFromBuffer(
   }
 }
 
+/**
+ * Extract metadata from a PDF URL. When the server supports HTTP Range,
+ * PDF.js will fetch only the required byte ranges internally.
+ */
+export async function extractMetadataFromUrl(
+  url: string,
+  fileName: string
+): Promise<ExtractMetadataResult> {
+  const startTime = Date.now()
+  // File size is unknown here (we only have a URL). Keep it as 0 in debug.
+  const fileSize = 0
+
+  ;(pdfjsLib as any).GlobalWorkerOptions.workerSrc = undefined
+  const loadingTask = (pdfjsLib as any).getDocument({
+    url,
+    disableWorker: true,
+    rangeChunkSize: 256 * 1024,
+    stopAtErrors: false,
+  })
+
+  try {
+    const pdf = await loadingTask.promise
+
+    const extractionPromise = performExtraction(pdf, fileName, fileSize, startTime)
+    const timeoutPromise = new Promise<ExtractMetadataResult>((_, reject) => {
+      setTimeout(() => reject(new Error('Extraction timeout')), EXTRACTION_TIMEOUT_MS)
+    })
+
+    try {
+      return await Promise.race([extractionPromise, timeoutPromise])
+    } catch (error) {
+      console.error('Extraction error:', error instanceof Error ? error.message : 'Unknown error')
+      return createErrorResult('extraction_error', error, startTime, fileSize)
+    }
+  } catch (error) {
+    console.error('Failed to parse PDF:', error instanceof Error ? error.message : 'Unknown error')
+    return createErrorResult('parse_failed', error, startTime, fileSize)
+  } finally {
+    try {
+      await loadingTask.destroy()
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function performExtraction(
-  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  pdf: PdfDocumentProxyLike,
   fileName: string,
   fileSize: number,
   startTime: number
@@ -196,7 +249,7 @@ async function performExtraction(
 }
 
 async function extractTextFromFirstPages(
-  pdf: Awaited<ReturnType<typeof getDocumentProxy>>,
+  pdf: PdfDocumentProxyLike,
   maxPages: number
 ): Promise<{ text: string; pagesScanned: number }> {
   const texts: string[] = []
