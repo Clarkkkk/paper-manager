@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { paperId, paperContent, model: customModel } = await req.json()
+    const { paperId, paperContent } = await req.json()
     
     if (!paperId) {
       return new Response(
@@ -54,13 +54,10 @@ Abstract: ${paperData.abstract || 'Not provided'}
 ${paperContent ? `Full Text Content:\n${paperContent.slice(0, 15000)}` : ''}
 `
 
-    // 动态获取 AI 客户端
-    const { client, model: defaultModel } = await getAIClient()
+    // 动态获取 AI 客户端（模型由服务端根据用户 profile 统一决定）
+    const { client, model: modelId } = await getAIClient()
     
-    // 优先使用前端传递的模型
-    const modelId = customModel || defaultModel
-    
-    console.log(`[Generate Notes] Using model: ${modelId}, custom: ${!!customModel}`)
+    console.log(`[Generate Notes] Using model: ${modelId}`)
 
     // 流式生成笔记
     const result = await streamText({

@@ -2,33 +2,16 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { getUserProfile } from '@/lib/supabase/server'
+import {
+  type ApiProvider,
+  type UserAIProfile,
+  DEFAULT_BASE_URLS,
+  DEFAULT_MODELS,
+  DEFAULT_FREE_MODEL_ID,
+} from './config'
 
-// API 提供商类型
-export type ApiProvider = 'google' | 'openai' | 'openrouter' | 'custom'
-
-// 用户配置类型
-interface UserProfile {
-  preferred_model?: string
-  openai_api_key?: string | null
-  api_provider?: ApiProvider
-  api_base_url?: string | null
-}
-
-// 各提供商默认 Base URL
-const DEFAULT_BASE_URLS: Record<ApiProvider, string> = {
-  google: 'https://generativelanguage.googleapis.com/v1beta',
-  openai: 'https://api.openai.com/v1',
-  openrouter: 'https://openrouter.ai/api/v1',
-  custom: '',
-}
-
-// 各提供商默认模型
-const DEFAULT_MODELS: Record<ApiProvider, string> = {
-  google: 'gemini-2.0-flash-lite',
-  openai: 'gpt-4o-mini',
-  openrouter: 'liquid/lfm-2.5-1.2b-instruct:free',  // 使用 LFM 2.5 1.2B，更稳定
-  custom: 'gpt-4',
-}
+// Re-export types and config for convenience
+export type { ApiProvider } from './config'
 
 // 判断提供商使用的 SDK 类型
 function getSDKType(provider: ApiProvider): 'google' | 'openai' {
@@ -53,30 +36,33 @@ function validateModelId(modelId: string): string {
 
 // 动态创建 AI 客户端 (支持多提供商)
 export async function getAIClient(fixedModel?: string) {
-  const profile = await getUserProfile() as UserProfile | null
+  const profile = await getUserProfile() as UserAIProfile | null
   
   console.log('[AI Client] Profile:', JSON.stringify({
     hasProfile: !!profile,
     apiProvider: profile?.api_provider,
     preferredModel: profile?.preferred_model,
     hasApiKey: !!profile?.openai_api_key,
-    keyPreview: profile?.openai_api_key?.substring(0, 10) + '...',
   }))
   
   // 如果指定了固定模型，直接使用（用于元数据提取等不需要大模型的任务）
+  // 固定模型走系统 OpenRouter key
   if (fixedModel) {
     console.log('[AI Client] Using fixed model:', fixedModel)
-    const provider: ApiProvider = 'openai'  // 固定模型使用 OpenAI 格式
-    const openai = createOpenAI({
-      apiKey: process.env.OPENROUTER_API_KEY || '',
-      baseURL: DEFAULT_BASE_URLS.openai,
+    const apiKey = process.env.OPENROUTER_API_KEY || ''
+    const openrouter = createOpenRouter({
+      apiKey,
+      headers: {
+        'HTTP-Referer': 'https://myscispace.app',
+        'X-Title': 'MySciSpace',
+      },
     })
     
     return {
-      client: (modelId: string) => openai.chat(modelId),
+      client: (modelId: string) => openrouter.chat(modelId),
       model: fixedModel,
       hasCustomKey: false,
-      provider,
+      provider: 'openrouter' as ApiProvider,
     }
   }
   
@@ -84,7 +70,8 @@ export async function getAIClient(fixedModel?: string) {
   let provider: ApiProvider = (profile?.api_provider as ApiProvider) || 'openrouter'
   
   // 检查是否使用系统默认（用户没有配置自定义 key）
-  const hasCustomKey = profile?.openai_api_key && !profile.openai_api_key.includes('****')
+  // 注意：数据库中存储的是原始 key（服务端可用）。如果 key 已被错误写入为 masked（含 '*'），则视为无效。
+  const hasCustomKey = typeof profile?.openai_api_key === 'string' && profile.openai_api_key.length > 0 && !profile.openai_api_key.includes('*')
   
   console.log('[AI Client] hasCustomKey:', hasCustomKey)
   
@@ -125,9 +112,9 @@ export async function getAIClient(fixedModel?: string) {
   
   // 如果使用系统默认，只允许免费模型
   if (!hasCustomKey) {
-    // 确保使用免费的 LFM 模型（更稳定）
+    // 确保使用免费模型
     if (!modelId.includes(':free')) {
-      modelId = 'liquid/lfm-2.5-1.2b-instruct:free'
+      modelId = DEFAULT_FREE_MODEL_ID
     }
   }
   

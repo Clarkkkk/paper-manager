@@ -224,6 +224,13 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
         const created = await paperRes.json()
         const createdPaperId = created?.paper?.id as string | undefined
         if (createdPaperId) {
+          // 预热 RAG 索引（分块 + embedding 入库），不阻塞上传流程
+          void fetch('/api/papers/ingest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paperId: createdPaperId }),
+          }).catch(() => {})
+
           void fetch('/api/parse-pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

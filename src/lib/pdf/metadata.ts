@@ -3,6 +3,7 @@ import { getAIClient } from '@/lib/ai/openai'
 import { generateText } from 'ai'
 import { DOI_PREFIX_MAP, NORMALIZED_JOURNAL_MAP, COMMON_JOURNALS } from '@/data/journal-recognition'
 import { ensurePdfjsWorker } from '@/lib/pdf/pdfjs-worker'
+import { ensureDOMMatrix } from '@/lib/pdf/dommatrix-polyfill'
 
 const MAX_EXTRACTED_TEXT_LENGTH = 50000
 const AI_METADATA_TEXT_LENGTH = 3000
@@ -32,6 +33,7 @@ type PdfjsModuleLike = {
 let pdfjsPromise: Promise<PdfjsModuleLike> | null = null
 async function getPdfjs(): Promise<PdfjsModuleLike> {
   if (!pdfjsPromise) {
+    ensureDOMMatrix()
     pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => m as unknown as PdfjsModuleLike)
   }
   return pdfjsPromise

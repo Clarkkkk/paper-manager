@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { Paper, Note } from '@/types/database'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { ArrowLeft, FileText, MessageSquare, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { NotesPanel } from './notes-panel'
 import { ChatPanel, Message } from './chat-panel'
-import { ModelSelector, useQuickModel } from './model-selector'
 import { cn } from '@/lib/utils'
 
 interface PaperReaderProps {
@@ -37,16 +36,8 @@ export function PaperReader({ paper, note, pdfPath }: PaperReaderProps) {
   const [pdfUrl, setPdfUrl] = useState<string>('')
   const [isLoadingPdfUrl, setIsLoadingPdfUrl] = useState(true)
   
-  // 使用快捷模型选择
-  const [quickModel, setQuickModel] = useState<string>('liquid/lfm-2.5-1.2b-instruct:free')
-  
   // 将聊天消息状态提升到父组件，防止切换 tab 时丢失
   const [chatMessages, setChatMessages] = useState<Message[]>([])
-
-  // 同步快捷模型
-  const handleModelChange = useCallback((modelId: string) => {
-    setQuickModel(modelId)
-  }, [])
 
   // 获取（并缓存）PDF 的 signed URL，用于 iframe 加载
   useEffect(() => {
@@ -171,9 +162,6 @@ export function PaperReader({ paper, note, pdfPath }: PaperReaderProps) {
             )}
           </div>
           
-          {/* 快捷模型选择器 */}
-          <ModelSelector onModelChange={handleModelChange} />
-          
           {/* PDF 内容加载状态 */}
           {isLoadingPdf && (
             <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -273,7 +261,7 @@ export function PaperReader({ paper, note, pdfPath }: PaperReaderProps) {
             activeTab === 'notes' ? 'visible' : 'invisible'
           )}>
             <ScrollArea className="h-full">
-              <NotesPanel paper={paper} existingNote={note} pdfContent={pdfContent} quickModel={quickModel} />
+              <NotesPanel paper={paper} existingNote={note} pdfContent={pdfContent} />
             </ScrollArea>
           </div>
           
@@ -287,7 +275,6 @@ export function PaperReader({ paper, note, pdfPath }: PaperReaderProps) {
               pdfContent={pdfContent}
               messages={chatMessages}
               setMessages={setChatMessages}
-              quickModel={quickModel}
             />
           </div>
         </div>

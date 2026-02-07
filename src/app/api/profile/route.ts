@@ -34,14 +34,23 @@ export async function GET() {
         if (createError) {
           return NextResponse.json({ error: createError.message }, { status: 500 })
         }
-        return NextResponse.json({ profile: newProfile })
+        const profileAny = newProfile as any
+        if (profileAny?.openai_api_key) {
+          profileAny.openai_api_key = maskApiKey(profileAny.openai_api_key)
+        }
+        return NextResponse.json({ profile: profileAny, hasCustomKey: false })
       }
       return NextResponse.json({ error: error.message }, { status: 500 })
     }
 
     // 使用 any 绕过类型推断问题
     const profileAny = profile as any
-    // 隐藏部分 API Key
+    const rawKey = profileAny?.openai_api_key
+    // 服务端判断是否存在“可用的自定义 key”（不泄漏真实 key）
+    // 注意：GET 会返回 masked key，因此前端不应再通过字符串推断。
+    const hasCustomKey = typeof rawKey === 'string' && rawKey.length > 0 && !rawKey.includes('*')
+
+    // 隐藏部分 API Key（只返回 mask，不返回原文）
     if (profileAny.openai_api_key) {
       profileAny.openai_api_key = maskApiKey(profileAny.openai_api_key)
     }
@@ -51,6 +60,7 @@ export async function GET() {
 
     return NextResponse.json({ 
       profile: profileAny,
+      hasCustomKey,
       hasSystemApiKey,
       defaultProvider: process.env.GOOGLE_API_KEY ? 'google' : (process.env.SYSTEM_OPENAI_API_KEY ? 'openai' : null),
     })

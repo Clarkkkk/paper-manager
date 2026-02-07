@@ -1,4 +1,5 @@
 import { ensurePdfjsWorker } from '@/lib/pdf/pdfjs-worker'
+import { ensureDOMMatrix } from '@/lib/pdf/dommatrix-polyfill'
 
 type PdfjsModuleLike = {
   GlobalWorkerOptions: {
@@ -29,6 +30,7 @@ let pdfjsPromise: Promise<PdfjsModuleLike> | null = null
 
 async function getPdfjs(): Promise<PdfjsModuleLike> {
   if (!pdfjsPromise) {
+    ensureDOMMatrix()
     pdfjsPromise = import('pdfjs-dist/legacy/build/pdf.mjs').then((m) => m as unknown as PdfjsModuleLike)
   }
   return pdfjsPromise

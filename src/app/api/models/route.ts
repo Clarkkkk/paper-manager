@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { FREE_MODELS } from '@/lib/ai/config'
+import { createClient } from '@/lib/supabase/server'
 
 // 从各提供商 API 获取最新模型列表
 export async function POST(req: NextRequest) {
   try {
-    const { provider, apiKey, baseUrl } = await req.json()
+    const { provider, apiKey, baseUrl, includeModelId } = await req.json()
 
     if (!provider) {
       return NextResponse.json({ error: 'Provider is required' }, { status: 400 })
@@ -13,23 +15,83 @@ export async function POST(req: NextRequest) {
 
     // 系统默认只返回免费模型
     if (provider === 'system') {
-      return NextResponse.json({ models: getFreeModels() })
+      return NextResponse.json({ models: FREE_MODELS })
     }
+
+    // 尝试从数据库读取用户已保存的 key（不向客户端返回，仅用于服务端拉取模型列表）
+    // 这样即使前端不回填 key（为安全），刷新后仍能拿到完整模型列表，避免选择被回退到免费模型。
+    let resolvedKey: string | undefined = typeof apiKey === 'string' && apiKey ? apiKey : undefined
+    let resolvedBaseUrl: string | undefined = typeof baseUrl === 'string' && baseUrl ? baseUrl : undefined
+    let resolvedIncludeModelId: string | undefined =
+      typeof includeModelId === 'string' && includeModelId ? includeModelId : undefined
+
+    const logMeta: Record<string, unknown> = {
+      provider,
+      hasBodyKey: !!resolvedKey,
+      hasBodyBaseUrl: !!resolvedBaseUrl,
+      includeModelId: resolvedIncludeModelId || null,
+    }
+    try {
+      const supabase = await createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('openai_api_key, api_base_url, preferred_model')
+          .eq('id', user.id)
+          .single()
+
+        const profileAny = profile as any
+        const profileKey = typeof profileAny?.openai_api_key === 'string' ? profileAny.openai_api_key : undefined
+        const profileBaseUrl = typeof profileAny?.api_base_url === 'string' ? profileAny.api_base_url : undefined
+        const profilePreferredModel =
+          typeof profileAny?.preferred_model === 'string' ? profileAny.preferred_model : undefined
+
+        if (!resolvedKey && profileKey && !profileKey.includes('*')) {
+          resolvedKey = profileKey
+        }
+        if (!resolvedBaseUrl && profileBaseUrl) {
+          resolvedBaseUrl = profileBaseUrl
+        }
+        if (!resolvedIncludeModelId && profilePreferredModel) {
+          resolvedIncludeModelId = profilePreferredModel
+        }
+
+        logMeta.hasProfileKey = !!profileKey && !String(profileKey).includes('*')
+        logMeta.hasProfileBaseUrl = !!profileBaseUrl
+        logMeta.profilePreferredModel = profilePreferredModel || null
+      }
+    } catch {
+      // ignore (fall back to env/defaults)
+    }
+
+    console.log('[models]', JSON.stringify(logMeta))
 
     switch (provider) {
       case 'openai':
-        models = await fetchOpenAIModels(apiKey, baseUrl)
+        models = await fetchOpenAIModels(resolvedKey, resolvedBaseUrl)
         break
       case 'google':
-        models = await fetchGoogleModels(apiKey, baseUrl)
+        models = await fetchGoogleModels(resolvedKey, resolvedBaseUrl)
         break
       case 'openrouter':
-        models = await fetchOpenRouterModels(apiKey)
+        // 如果 resolvedKey 可用，则可获取完整（含付费）模型列表
+        models = await fetchOpenRouterModels(resolvedKey, false, resolvedIncludeModelId)
         break
       default:
         // 自定义提供商返回空列表
         models = []
     }
+
+    console.log(
+      '[models]',
+      JSON.stringify({
+        provider,
+        returned: models.length,
+        hasIncludedModel: resolvedIncludeModelId ? models.some((m) => m.id === resolvedIncludeModelId) : null,
+        head: models.slice(0, 5).map((m) => m.id),
+      })
+    )
 
     return NextResponse.json({ models })
   } catch (error) {
@@ -39,44 +101,6 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     )
   }
-}
-
-// 获取系统免费模型列表 - 33个 OpenRouter 免费模型
-function getFreeModels() {
-  return [
-    { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'LFM 2.5 1.2B', description: '稳定可用，推荐默认' },
-    { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Llama 3.2 3B', description: 'Meta 开源' },
-    { id: 'google/gemma-3-4b-it:free', name: 'Gemma 3 4B', description: 'Google 轻量' },
-    { id: 'deepseek/deepseek-r1-0528:free', name: 'DeepSeek R1', description: '推理能力强' },
-    { id: 'google/gemma-3-12b-it:free', name: 'Gemma 3 12B', description: '更强能力' },
-    { id: 'meta-llama/llama-3.1-405b-instruct:free', name: 'Llama 3.1 405B', description: '开源旗舰' },
-    { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B', description: '70B 强力' },
-    { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1', description: '欧洲开源' },
-    { id: 'tngtech/deepseek-r1t-chimera:free', name: 'DeepSeek R1T', description: 'TNG 优化版' },
-    { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B', description: '27B 能力版' },
-    { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', name: 'Venice Uncensored', description: '无审查版' },
-    { id: 'tngtech/deepseek-r1t2-chimera:free', name: 'DeepSeek R1T2', description: 'TNG R1T2' },
-    { id: 'arcee-ai/trinity-mini:free', name: 'Trinity Mini', description: 'Arcee 轻量' },
-    { id: 'arcee-ai/trinity-large-preview:free', name: 'Trinity Large', description: 'Arcee 预览版' },
-    { id: 'nvidia/nemotron-nano-9b-v2:free', name: 'Nemotron Nano', description: 'NVIDIA 9B' },
-    { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron VL', description: 'NVIDIA 12B VL' },
-    { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'Nemotron 30B', description: 'NVIDIA 30B' },
-    { id: 'stepfun/step-3.5-flash:free', name: 'Step 3.5 Flash', description: 'StepFun 闪速' },
-    { id: 'upstage/solar-pro-3:free', name: 'Solar Pro 3', description: 'Upstage 专业' },
-    { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'LFM Thinking', description: '思考模型' },
-    { id: 'allenai/molmo-2-8b:free', name: 'Molmo 2 8B', description: 'AllenAI 视觉' },
-    { id: 'qwen/qwen3-next-80b-a3b-instruct:free', name: 'Qwen3 Next 80B', description: 'Qwen 80B' },
-    { id: 'qwen/qwen3-coder:free', name: 'Qwen3 Coder', description: '代码专用' },
-    { id: 'qwen/qwen-2.5-vl-7b-instruct:free', name: 'Qwen2.5-VL', description: '视觉语言' },
-    { id: 'z-ai/glm-4.5-air:free', name: 'GLM 4.5 Air', description: '智谱 AI' },
-    { id: 'openai/gpt-oss-120b:free', name: 'GPT-OSS 120B', description: 'OpenAI 开源' },
-    { id: 'openai/gpt-oss-20b:free', name: 'GPT-OSS 20B', description: 'OpenAI 小型' },
-    { id: 'google/gemma-3n-e2b-it:free', name: 'Gemma 3n 2B', description: 'Gemma 轻量' },
-    { id: 'google/gemma-3n-e4b-it:free', name: 'Gemma 3n 4B', description: 'Gemma 4B' },
-    { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Hermes 3 405B', description: 'Nous 优化' },
-    { id: 'openrouter/free:free', name: 'Free Router', description: '自动路由' },
-    { id: 'qwen/qwen3-4b:free', name: 'Qwen3 4B', description: '速度较快' },
-  ]
 }
 
 // OpenAI 模型列表
@@ -165,7 +189,7 @@ async function fetchGoogleModels(apiKey?: string, baseUrl?: string) {
 }
 
 // OpenRouter 模型列表
-async function fetchOpenRouterModels(apiKey?: string, freeOnly: boolean = false) {
+async function fetchOpenRouterModels(apiKey?: string, freeOnly: boolean = false, includeModelId?: string) {
   try {
     const headers: Record<string, string> = {
       'HTTP-Referer': 'https://myscispace.app',
@@ -176,38 +200,65 @@ async function fetchOpenRouterModels(apiKey?: string, freeOnly: boolean = false)
     }
 
     const res = await fetch('https://openrouter.ai/api/v1/models', { headers })
+
+    console.log(
+      '[models][openrouter]',
+      JSON.stringify({
+        ok: res.ok,
+        status: res.status,
+        hasAuth: !!apiKey,
+        includeModelId: includeModelId || null,
+        freeOnly,
+      })
+    )
     
-    if (!res.ok) return freeOnly ? getFreeModels() : getDefaultOpenRouterModels()
+    if (!res.ok) return freeOnly ? FREE_MODELS : getDefaultOpenRouterModels()
     
-    const data = await res.json()
-    const models = data.data || []
+    const data: unknown = await res.json()
+    const modelsRaw: unknown = (data as { data?: unknown } | null)?.data
+    const models = Array.isArray(modelsRaw) ? (modelsRaw as Array<Record<string, unknown>>) : []
     
     // 如果只需要免费模型
     if (freeOnly) {
       const freeModels = models
-        .filter((m: { id: string; pricing?: { prompt?: string } }) => 
-          m.pricing?.prompt === '0' || m.id.endsWith(':free')
-        )
+        .map((m) => {
+          const id = typeof m.id === 'string' ? m.id : ''
+          if (!id) return null
+          const pricing = (m.pricing && typeof m.pricing === 'object' ? (m.pricing as Record<string, unknown>) : null) || null
+          const promptPrice = pricing && typeof pricing.prompt === 'string' ? pricing.prompt : undefined
+          const isFree = promptPrice === '0' || id.endsWith(':free')
+          if (!isFree) return null
+          const name = typeof m.name === 'string' && m.name ? m.name : formatModelName(id)
+          return { id, name, description: '免费' }
+        })
+        .filter((x): x is { id: string; name: string; description: string } => Boolean(x))
         .slice(0, 50)
-        .map((m: { id: string; name?: string; description?: string }) => ({
-          id: m.id,
-          name: m.name || formatModelName(m.id),
-          description: '免费',
-        }))
       
-      return freeModels.length > 0 ? freeModels : getFreeModels()
+      return freeModels.length > 0 ? freeModels : FREE_MODELS
     }
     
-    // 返回所有模型，按流行度排序
-    return models
-      .slice(0, 100) // 限制数量
-      .map((m: { id: string; name?: string; description?: string; pricing?: { prompt?: string } }) => ({
-        id: m.id,
-        name: m.name || formatModelName(m.id),
-        description: m.pricing?.prompt === '0' ? '免费' : (m.description?.slice(0, 30) || ''),
-      }))
+    // 返回所有模型，按流行度排序（为了 UI 体验限制数量）。
+    // 但要保证 includeModelId（如用户已保存的 preferred_model）在列表里，避免刷新后选中项被回退到第一个（常见是免费）。
+    const all = models
+      .map((m) => {
+        const id = typeof m.id === 'string' ? m.id : ''
+        const name = typeof m.name === 'string' && m.name ? m.name : id ? formatModelName(id) : ''
+        const descriptionRaw = typeof m.description === 'string' ? m.description : ''
+        const pricing = (m.pricing && typeof m.pricing === 'object' ? (m.pricing as Record<string, unknown>) : null) || null
+        const promptPrice = pricing && typeof pricing.prompt === 'string' ? pricing.prompt : undefined
+        const description = promptPrice === '0' || id.endsWith(':free') ? '免费' : (descriptionRaw.slice(0, 30) || '')
+        return id ? { id, name, description } : null
+      })
+      .filter((x): x is { id: string; name: string; description: string } => Boolean(x))
+
+    const include = includeModelId ? all.find((m) => m.id === includeModelId) : undefined
+    const limited = all.slice(0, 100)
+    if (includeModelId && !limited.some((m) => m.id === includeModelId)) {
+      return include ? [include, ...limited].slice(0, 100) : [{ id: includeModelId, name: includeModelId, description: '' }, ...limited].slice(0, 100)
+    }
+    return limited
   } catch {
-    return freeOnly ? getFreeModels() : getDefaultOpenRouterModels()
+    return freeOnly ? FREE_MODELS : getDefaultOpenRouterModels()
   }
 }
 

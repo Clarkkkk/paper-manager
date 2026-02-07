@@ -13,17 +13,13 @@ interface NotesPanelProps {
   paper: Paper
   existingNote: Note | null
   pdfContent?: string
-  quickModel?: string
 }
 
-export function NotesPanel({ paper, existingNote, pdfContent: preloadedPdfContent, quickModel }: NotesPanelProps) {
+export function NotesPanel({ paper, existingNote, pdfContent: preloadedPdfContent }: NotesPanelProps) {
   const [note, setNote] = useState(existingNote?.content || '')
   const [streamingContent, setStreamingContent] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
-  
-  // 获取当前使用的模型
-  const currentModel = quickModel || localStorage.getItem('myscispace-quick-model') || 'liquid/lfm-2.5-1.2b-instruct:free'
 
   const handleGenerate = async () => {
     setStreamingContent('')
@@ -46,7 +42,6 @@ export function NotesPanel({ paper, existingNote, pdfContent: preloadedPdfConten
         body: JSON.stringify({
           paperId: paper.id,
           paperContent: pdfContent,
-          model: currentModel, // 发送快捷选择的模型
         }),
       })
       
