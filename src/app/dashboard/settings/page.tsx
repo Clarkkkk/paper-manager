@@ -268,7 +268,7 @@ export default function SettingsPage() {
     return Array.from(set).sort((a, b) => a.localeCompare(b))
   })()
 
-  const filteredModels = (() => {
+  const filteredAllModels = (() => {
     const q = modelQuery.trim().toLowerCase()
     return availableModels.filter((m) => {
       const id = String(m.id || '')
@@ -279,6 +279,9 @@ export default function SettingsPage() {
       return hay.includes(q)
     })
   })()
+
+  // Only render a small window for UX/perf, but filtering must apply to the full list.
+  const filteredModels = filteredAllModels.slice(0, 100)
 
   useEffect(() => {
     let cancelled = false
@@ -556,7 +559,9 @@ export default function SettingsPage() {
                   </div>
 
                   <div className="px-2 pb-2 text-xs text-zinc-500">
-                    {modelsLoading ? '正在加载模型…' : `显示 ${filteredModels.length} / ${availableModels.length}`}
+                    {modelsLoading
+                      ? '正在加载模型…'
+                      : `显示 ${filteredModels.length} / ${filteredAllModels.length}（总 ${availableModels.length}）`}
                   </div>
 
                   <DropdownMenuSeparator className="bg-zinc-800" />

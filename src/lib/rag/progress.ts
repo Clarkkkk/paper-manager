@@ -4,6 +4,7 @@ export type RagProgressStage =
   | 'rag_start'
   | 'thinking_precheck'
   | 'thinking_query'
+  | 'full_context_load'
   | 'attempt_start'
   | 'retrieval_start'
   | 'retrieval_done'

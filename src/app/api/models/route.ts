@@ -252,11 +252,14 @@ async function fetchOpenRouterModels(apiKey?: string, freeOnly: boolean = false,
       .filter((x): x is { id: string; name: string; description: string } => Boolean(x))
 
     const include = includeModelId ? all.find((m) => m.id === includeModelId) : undefined
-    const limited = all.slice(0, 100)
-    if (includeModelId && !limited.some((m) => m.id === includeModelId)) {
-      return include ? [include, ...limited].slice(0, 100) : [{ id: includeModelId, name: includeModelId, description: '' }, ...limited].slice(0, 100)
+    // Return full list for client-side filtering/search.
+    // Client will still only render a small window (e.g. first 100 after filtering) for UX/perf.
+    if (includeModelId && !all.some((m) => m.id === includeModelId)) {
+      return include
+        ? [include, ...all]
+        : [{ id: includeModelId, name: includeModelId, description: '' }, ...all]
     }
-    return limited
+    return all
   } catch {
     return freeOnly ? FREE_MODELS : getDefaultOpenRouterModels()
   }

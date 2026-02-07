@@ -137,6 +137,7 @@ export async function POST(req: NextRequest) {
         authors: metadataResult.authors,
         journal: metadataResult.journal,
         keywords: metadataResult.keywords,
+        abstract: metadataResult.abstract,
       },
       _debug: metadataResult._debug,
     })

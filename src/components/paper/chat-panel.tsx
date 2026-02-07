@@ -30,6 +30,7 @@ export function ChatPanel({ paper, pdfContent, messages, setMessages }: ChatPane
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [contextMode, setContextMode] = useState<'rag' | 'full'>('full')
   const [ingestion, setIngestion] = useState<any>(null)
   const [isLoadingIngestion, setIsLoadingIngestion] = useState(true)
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -140,6 +141,7 @@ export function ChatPanel({ paper, pdfContent, messages, setMessages }: ChatPane
             content: m.content,
           })),
           paperId: paper.id,
+          contextMode,
         }),
         signal: abortControllerRef.current.signal,
       })
@@ -288,6 +290,8 @@ export function ChatPanel({ paper, pdfContent, messages, setMessages }: ChatPane
         return '正在思考（判断是否需要检索）…'
       case 'thinking_query':
         return '正在思考（生成检索 query）…'
+      case 'full_context_load':
+        return '正在加载全文上下文…'
       case 'attempt_start':
         return `正在检索（第 ${attempt ?? '?'} / 3 次）…`
       case 'retrieval_start':
@@ -463,6 +467,33 @@ export function ChatPanel({ paper, pdfContent, messages, setMessages }: ChatPane
 
       {/* Input */}
       <div className="p-4 border-t border-zinc-800 shrink-0">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={contextMode === 'rag' ? 'secondary' : 'ghost'}
+              className="h-8"
+              onClick={() => setContextMode('rag')}
+              disabled={isLoading}
+            >
+              RAG 模式
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={contextMode === 'full' ? 'secondary' : 'ghost'}
+              className="h-8"
+              onClick={() => setContextMode('full')}
+              disabled={isLoading}
+            >
+              全量上下文
+            </Button>
+          </div>
+          <div className="text-xs text-zinc-600">
+            {contextMode === 'full' ? '不走检索，直接注入全文（按预算截断）' : '检索召回片段后再回答'}
+          </div>
+        </div>
         <form onSubmit={onSubmit} className="flex gap-2">
           <Textarea
             value={input}
@@ -512,11 +543,27 @@ function RagDebugView({ data }: { data: RagDebugData }) {
       <div className="text-zinc-400">
         traceId: <span className="text-zinc-300">{data.traceId}</span>
       </div>
+      {data.contextMode && (
+        <div className="text-zinc-400">
+          contextMode: <span className="text-zinc-300">{data.contextMode}</span>
+        </div>
+      )}
+      {data.fullContext && (
+        <div className="text-zinc-400">
+          fullContext:{' '}
+          <span className="text-zinc-300">
+            included={data.fullContext.includedChunks}/{data.fullContext.totalChunks}, chars={data.fullContext.charCount},
+            truncated={String(data.fullContext.truncated)}
+          </span>
+        </div>
+      )}
       <div className="text-zinc-400">
         usedAttempt: <span className="text-zinc-300">{data.usedAttempt}</span>
       </div>
 
-      {data.attempts.map((a) => (
+      {data.attempts.length === 0 ? (
+        <div className="text-zinc-500">（本次未使用 RAG attempts）</div>
+      ) : data.attempts.map((a) => (
         <div key={a.attempt} className="rounded-md border border-zinc-800 bg-zinc-900/30 p-2">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-zinc-400">
             <span>attempt: {a.attempt}</span>

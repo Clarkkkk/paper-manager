@@ -5,6 +5,17 @@ export type RagDebugData = {
   traceId: string
   paperId: string
   userQuestion: string
+  contextMode?: 'rag' | 'full'
+  fullContext?: {
+    totalChunks: number
+    includedChunks: number
+    maxChars: number
+    maxChunks: number
+    charCount: number
+    truncated: boolean
+    firstChunkIndex?: number
+    lastChunkIndex?: number
+  } | null
   precheck?: {
     isPaperRelated: boolean
     canAnswerDirectly: boolean

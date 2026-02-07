@@ -39,6 +39,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
   const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const [authors, setAuthors] = useState('')
+  const [abstract, setAbstract] = useState('')
   const [tags, setTags] = useState<string[]>([])
   const [keywords, setKeywords] = useState('')
   const [journal, setJournal] = useState('')
@@ -130,6 +131,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
         const meta = await metaRes.json()
         if (meta?.title) setTitle(meta.title)
         if (meta?.authors) setAuthors(meta.authors)
+        if (meta?.abstract) setAbstract(meta.abstract)
         if (meta?.keywords) setKeywords(meta.keywords)
         if (meta?.journal) setJournal(meta.journal)
         toast.success(`已自动识别论文信息 (${meta?._debug?.source || 'unknown'})`)
@@ -204,6 +206,7 @@ export function UploadButton({ variant = 'default', presetTags = [] }: UploadBut
         body: JSON.stringify({
           title: title.trim(),
           authors: authors.trim() || null,
+          abstract: abstract.trim() || null,
           file_url: uploadedFileUrl,
           file_name: file.name,
           file_size: file.size,

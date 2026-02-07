@@ -68,6 +68,7 @@ export async function POST(req: NextRequest) {
               authors: result.authors,
               journal: result.journal,
               keywords: result.keywords,
+              abstract: result.abstract,
               _debug: result._debug,
               _transport: {
                 mode: 'range_pdfjs',
@@ -92,6 +93,7 @@ export async function POST(req: NextRequest) {
           authors: result.authors,
           journal: result.journal,
           keywords: result.keywords,
+          abstract: result.abstract,
           _debug: result._debug,
           _transport: {
             mode: 'full_buffer',
@@ -115,6 +117,7 @@ export async function POST(req: NextRequest) {
       authors: '',
       keywords: '',
       journal: '',
+      abstract: '',
       _debug: {
         error: error instanceof Error ? error.message : 'Unknown error',
         processingTimeMs: Date.now() - startTime,

@@ -30,7 +30,9 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    const { messages, paperId } = await req.json()
+    const body = await req.json()
+    const { messages, paperId } = body || {}
+    const contextMode = body?.contextMode === 'full' ? 'full' : 'rag'
     
     if (!messages || !Array.isArray(messages)) {
       return new Response(
@@ -141,10 +143,12 @@ export async function POST(req: NextRequest) {
           let usedChunkIds: string[] = []
           let precheck: { isPaperRelated: boolean; canAnswerDirectly: boolean; reason?: string } | null = null
 
-          let shouldRunRag = Boolean(paperId && paperMeta && userQuestion)
+          let shouldRunRag = contextMode !== 'full' && Boolean(paperId && paperMeta && userQuestion)
+          let fullContextMeta: any = null
+          let fullContextText = ''
 
           // 3.1) 预检：判断是否需要检索（不相关/可直接回答则跳过 RAG）
-          if (paperId && paperMeta && userQuestion) {
+          if (contextMode !== 'full' && paperId && paperMeta && userQuestion) {
             try {
               safeEnqueueEvent({ stage: 'thinking_precheck', ts: Date.now(), traceId })
               precheck = await ragPrecheck({
@@ -170,6 +174,84 @@ export async function POST(req: NextRequest) {
               safeEnqueueEvent({ stage: 'error', ts: Date.now(), traceId, message: 'precheck_failed' })
               precheck = null
               shouldRunRag = true
+            }
+          }
+
+          // 3.1.5) Full-context mode: load full paper chunks (budgeted) and skip RAG.
+          if (contextMode === 'full' && paperId && paperMeta && userQuestion) {
+            try {
+              safeEnqueueEvent({ stage: 'full_context_load', ts: Date.now(), traceId })
+              const maxCharsRaw = Number(process.env.FULL_CONTEXT_MAX_CHARS || '80000')
+              const maxChunksRaw = Number(process.env.FULL_CONTEXT_MAX_CHUNKS || '60')
+              const maxChars = Number.isFinite(maxCharsRaw) && maxCharsRaw > 1000 ? maxCharsRaw : 80000
+              const maxChunks = Number.isFinite(maxChunksRaw) && maxChunksRaw > 0 ? maxChunksRaw : 60
+
+              const { data: chunkRows, error: chunkErr } = await supabaseAny
+                .from('paper_chunks')
+                .select('chunk_index, page_start, page_end, content')
+                .eq('paper_id', paperId)
+                .eq('user_id', user.id)
+                .order('chunk_index', { ascending: true })
+
+              if (chunkErr) {
+                console.warn('[full_context] load chunks failed:', chunkErr)
+              }
+
+              const rows = Array.isArray(chunkRows) ? chunkRows : []
+              let charCount = 0
+              const included: any[] = []
+              for (const r of rows) {
+                if (included.length >= maxChunks) break
+                const header = `[chunk_index=${String(r.chunk_index)} p.${String(r.page_start ?? '?')}-${String(r.page_end ?? '?')}]\n`
+                const text = String(r.content || '')
+                const entryLen = header.length + text.length + 2
+                if (included.length > 0 && charCount + entryLen > maxChars) break
+                included.push({ ...r })
+                charCount += entryLen
+              }
+              // If budget too small and nothing included, include at least one chunk (truncated).
+              if (included.length === 0 && rows.length > 0) {
+                const r = rows[0]
+                const header = `[chunk_index=${String(r.chunk_index)} p.${String(r.page_start ?? '?')}-${String(r.page_end ?? '?')}]\n`
+                const text = String(r.content || '').slice(0, Math.max(0, maxChars - header.length - 2))
+                included.push({ ...r, content: text })
+                charCount = header.length + text.length + 2
+              }
+
+              const firstIdx = included.length ? Number(included[0].chunk_index) : undefined
+              const lastIdx = included.length ? Number(included[included.length - 1].chunk_index) : undefined
+              const truncated = included.length < rows.length
+
+              fullContextMeta = {
+                totalChunks: rows.length,
+                includedChunks: included.length,
+                maxChars,
+                maxChunks,
+                charCount,
+                truncated,
+                firstChunkIndex: Number.isFinite(firstIdx as any) ? firstIdx : undefined,
+                lastChunkIndex: Number.isFinite(lastIdx as any) ? lastIdx : undefined,
+              }
+
+              fullContextText =
+                included.length > 0
+                  ? `--- Full Paper Text (chunked) ---\n\n${included
+                      .map((r) => {
+                        const header = `[chunk_index=${String(r.chunk_index)} p.${String(r.page_start ?? '?')}-${String(r.page_end ?? '?')}]\n`
+                        return `${header}${String(r.content || '')}`
+                      })
+                      .join('\n\n')}\n`
+                  : ''
+
+              console.log('[full_context]', JSON.stringify({ traceId, paperId, ...fullContextMeta }))
+              shouldRunRag = false
+            } catch (e) {
+              console.warn('[full_context] failed:', e)
+              safeEnqueueEvent({ stage: 'error', ts: Date.now(), traceId, message: 'full_context_failed' })
+              fullContextMeta = null
+              fullContextText = ''
+              // Fall back to rag (best-effort)
+              shouldRunRag = Boolean(paperId && paperMeta && userQuestion)
             }
           }
 
@@ -235,7 +317,7 @@ export async function POST(req: NextRequest) {
               : ''
 
           const systemMessage = paperContext
-            ? `${precheckHint}${RAG_SYSTEM_PROMPT}\n\n--- Paper Context ---\n${paperContext}\n\n${retrievalAttemptsText}`
+            ? `${precheckHint}${RAG_SYSTEM_PROMPT}\n\n--- Paper Context ---\n${paperContext}\n\n${contextMode === 'full' ? fullContextText : retrievalAttemptsText}`
             : `${precheckHint}${RAG_SYSTEM_PROMPT}`
 
           // 5) 在模型正文开始之前，先发 debug prelude（可选），再发 answer_start（客户端据此切换到“正文模式”）
@@ -245,6 +327,8 @@ export async function POST(req: NextRequest) {
                   traceId,
                   paperId,
                   userQuestion,
+                  contextMode,
+                  fullContext: fullContextMeta,
                   precheck,
                   attempts: retrievalAttemptsRaw,
                   usedAttempt,
@@ -272,8 +356,6 @@ export async function POST(req: NextRequest) {
                 }
               }
               if (chunk.type === 'reasoning-delta') {
-                console.log('Reasoning delta:', chunk.text)
-                console.log(chunk.providerMetadata)
                 const d = String((chunk as any).delta)
                 reasoningDeltaLen += d.length
                 if (reasoningDeltaPreview.length < 600) {
